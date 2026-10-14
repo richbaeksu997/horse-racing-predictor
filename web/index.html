@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>경마 예측</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --text: #1d1f1e; --muted: #6b716d; --line: #e3e1da;
+    --accent: #1f6f4a; --accent-soft: #dcefe4; --bar2: #8fbfa5; --gold: #b7791f; --warn-bg: #fdf3dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151816; --card: #1e2220; --text: #e9ece9; --muted: #98a09b; --line: #2e3431;
+      --accent: #5fc393; --accent-soft: #24382e; --bar2: #3f7a5c; --gold: #e0b057; --warn-bg: #3a3220;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+  select, button { font: inherit; color: inherit; }
+  select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); cursor: pointer; }
+  .chip small { color: var(--muted); margin-left: 4px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip.on small { color: inherit; opacity: .85; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-top: 16px; overflow: hidden; }
+  .race-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; padding: 16px; }
+  .race-head h2 { font-size: 18px; margin: 0; }
+  .race-head .meta { color: var(--muted); }
+  .sort { display: flex; gap: 6px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+  th, td { padding: 10px 12px; border-top: 1px solid var(--line); text-align: left; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .no { display: inline-block; min-width: 26px; padding: 1px 0; text-align: center; border-radius: 6px;
+        background: var(--accent-soft); font-weight: 700; }
+  .name { font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .prob { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+  .prob .track { flex: 1; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .prob .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  .prob.top3 .fill { background: var(--bar2); }
+  .prob span { width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+  tr.pick td { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+  .ord1 { color: var(--gold); font-weight: 700; }
+  .note { margin-top: 12px; padding: 10px 14px; border-radius: 8px; background: var(--warn-bg); font-size: 13px; }
+  .status { padding: 40px 16px; text-align: center; color: var(--muted); }
+  footer { margin-top: 20px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>경마 예측</h1>
+  <div class="controls">
+    <select id="date" aria-label="경주일"></select>
+    <div class="chips" id="meets"></div>
+  </div>
+  <div class="chips" id="races"></div>
+  <div id="view"><div class="status">불러오는 중…</div></div>
+  <footer>
+    확률은 과거 성적만으로 계산한 모델 추정치이며, 당일 마체중·주로 상태·배당률은 반영하지 않습니다.
+    검증 기간 기준 모델 1순위의 1착 적중률은 약 32%로, 인기 1위 말(약 38%)보다 낮습니다.
+  </footer>
+</main>
+<script>
+const DAYS = "일월화수목금토";
+const state = { data: null, meet: null, rcNo: null, sort: "prob" };
+const $ = id => document.getElementById(id);
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "onclick") node.onclick = v; else if (k === "style") node.style.cssText = v; else node.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+}
+const pct = p => (p * 100).toFixed(1) + "%";
+const dash = v => (v == null || v === "" ? "–" : v);
+
+function dateLabel(d) {
+  const dt = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const tag = dt > today ? " · 예정" : dt.getTime() === today.getTime() ? " · 오늘" : "";
+  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)} (${DAYS[dt.getDay()]})${tag}`;
+}
+
+function status(msg) { $("view").replaceChildren(el("div", { class: "status" }, msg)); }
+
+async function loadDates() {
+  const weeks = (await (await fetch("data/dates.json")).json()).filter(w => w.dates.length);
+  const dates = weeks.flatMap(w => w.dates);
+  if (!dates.length) return status("지난주·이번 주·다음 주에 경주가 없습니다.");
+  $("date").replaceChildren(...weeks.map(w =>
+    el("optgroup", { label: w.label }, ...w.dates.map(d => el("option", { value: d }, dateLabel(d))))));
+  // 오늘 이후 중 가장 가까운 날을 먼저 보여 준다.
+  const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const next = dates.filter(d => d >= today).pop();
+  if (next) $("date").value = next;
+  loadDay();
+}
+
+async function loadDay() {
+  const day = $("date").value;
+  $("meets").replaceChildren(); $("races").replaceChildren();
+  status("불러오는 중…");
+  const res = await fetch(`data/${day}.json`);
+  const body = await res.json().catch(() => ({}));
+  if (day !== $("date").value) return;
+  if (!res.ok) return status(body.error || "불러오지 못했습니다.");
+  state.data = body;
+  state.meet = body.races[0].meet;
+  state.rcNo = body.races[0].rcNo;
+  render();
+}
+
+function render() {
+  const races = state.data.races;
+  const meets = [...new Map(races.map(r => [r.meet, r.meetName]))];
+  $("meets").replaceChildren(...meets.map(([m, name]) =>
+    el("button", { class: "chip" + (m === state.meet ? " on" : ""), onclick: () => {
+      state.meet = m; state.rcNo = races.find(r => r.meet === m).rcNo; render();
+    } }, name)));
+  const mine = races.filter(r => r.meet === state.meet);
+  $("races").replaceChildren(...mine.map(r =>
+    el("button", { class: "chip" + (r.rcNo === state.rcNo ? " on" : ""), onclick: () => { state.rcNo = r.rcNo; render(); } },
+      r.rcNo + "경주", r.stTime ? el("small", {}, r.stTime) : null)));
+  renderRace(mine.find(r => r.rcNo === state.rcNo));
+}
+
+function probCell(p, max, cls) {
+  return el("td", {}, el("div", { class: "prob " + cls },
+    el("div", { class: "track" }, el("div", { class: "fill", style: `width:${Math.min(100, p / max * 100)}%` })),
+    el("span", {}, pct(p))));
+}
+
+function renderRace(race) {
+  const ranked = [...race.horses].sort((a, b) => b.pWin - a.pWin);
+  const rankOf = new Map(ranked.map((h, i) => [h.chulNo, i + 1]));
+  const horses = state.sort === "prob" ? ranked : [...race.horses].sort((a, b) => a.chulNo - b.chulNo);
+  const maxWin = ranked[0].pWin, maxTop3 = Math.max(...horses.map(h => h.pTop3));
+
+  const sortBtn = (key, label) => el("button", { class: "chip" + (state.sort === key ? " on" : ""),
+    onclick: () => { state.sort = key; renderRace(race); } }, label);
+  const meta = [race.dist && race.dist + "m", race.rank, race.rcName, race.budam, race.ageCond,
+                race.stTime && "출발 " + race.stTime, race.horses.length + "두"].filter(Boolean).join(" · ");
+  const head = el("div", { class: "race-head" },
+    el("div", {}, el("h2", {}, `${race.meetName} ${race.rcNo}경주`), el("div", { class: "meta" }, meta)),
+    el("div", { class: "sort" }, sortBtn("prob", "확률순"), sortBtn("no", "번호순")));
+
+  const cols = ["예측", "번호", "마명", "기수", "조교사", "부담중량", "레이팅", "통산 (1·2·3착)", "휴양", "1착 확률", "3착 이내 확률"];
+  if (race.finished) cols.push("실제 착순", "단승 배당");
+  const numeric = new Set(["부담중량", "레이팅", "휴양", "실제 착순", "단승 배당"]);
+  const thead = el("thead", {}, el("tr", {}, ...cols.map(c => el("th", numeric.has(c) ? { class: "num" } : {}, c))));
+
+  const rows = horses.map(h => {
+    const [n, w1, w2, w3] = h.record;
+    const record = n == null ? "–" : n === 0 ? "데뷔전" : `${n}전 (${w1}·${w2}·${w3})`;
+    const tr = el("tr", rankOf.get(h.chulNo) === 1 ? { class: "pick" } : {},
+      el("td", {}, rankOf.get(h.chulNo) + "위"),
+      el("td", {}, el("span", { class: "no" }, h.chulNo)),
+      el("td", {}, el("div", { class: "name" }, h.hrName),
+        el("div", { class: "sub" }, [h.prd, h.sex, h.age && h.age + "세"].filter(Boolean).join(" · "))),
+      el("td", {}, h.jkName),
+      el("td", {}, h.trName),
+      el("td", { class: "num" }, dash(h.wgBudam)),
+      el("td", { class: "num" }, dash(h.rating)),
+      el("td", {}, record),
+      el("td", { class: "num" }, h.daysSince == null ? "–" : h.daysSince + "일"),
+      probCell(h.pWin, maxWin, "win"),
+      probCell(h.pTop3, maxTop3, "top3"));
+    if (race.finished) tr.append(
+      el("td", { class: "num" + (h.ord === 1 ? " ord1" : "") }, h.ord == null ? "–" : h.ord + "착"),
+      el("td", { class: "num" }, dash(h.odds)));
+    return tr;
+  });
+
+  const card = el("div", { class: "card" }, head,
+    el("div", { class: "scroll" }, el("table", {}, thead, el("tbody", {}, ...rows))));
+  const note = race.finished && state.data.afterResult ? el("div", { class: "note" },
+    "이 예측은 경주가 끝난 뒤에 계산됐습니다. 결과가 모델 학습에 포함됐을 수 있어, 여기서 잘 맞아 보여도 실제 예측력의 근거로 보기는 어렵습니다.") : null;
+  const stamp = el("div", { class: "sub", style: "margin-top:10px" }, "예측 계산 시각: " + state.data.predictedAt);
+  $("view").replaceChildren(card, ...(note ? [note] : []), stamp);
+}
+
+$("date").onchange = loadDay;
+loadDates().catch(() => status("서버에 연결하지 못했습니다."));
+</script>
+</body>
+</html>
