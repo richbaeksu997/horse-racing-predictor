@@ -1,0 +1,8 @@
+# 인증키는 절대 올리지 않는다.
+.env
+# PC 에만 두는 것들 (원본 응답, 학습된 모델, CSV 출력)
+data/raw/
+models/
+predictions/
+__pycache__/
+.claude/
