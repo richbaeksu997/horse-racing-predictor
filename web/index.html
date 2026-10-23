@@ -94,7 +94,7 @@ function dateLabel(d) {
 function status(msg) { $("view").replaceChildren(el("div", { class: "status" }, msg)); }
 
 async function loadDates() {
-  const weeks = (await (await fetch("data/dates.json")).json()).filter(w => w.dates.length);
+  const weeks = (await (await fetch("data/dates.json?v=" + Date.now(), { cache: "no-store" })).json()).filter(w => w.dates.length);
   const dates = weeks.flatMap(w => w.dates);
   if (!dates.length) return status("지난주·이번 주·다음 주에 경주가 없습니다.");
   $("date").replaceChildren(...weeks.map(w =>
@@ -110,7 +110,7 @@ async function loadDay() {
   const day = $("date").value;
   $("meets").replaceChildren(); $("races").replaceChildren();
   status("불러오는 중…");
-  const res = await fetch(`data/${day}.json`);
+  const res = await fetch(`data/${day}.json?v=${Date.now()}`, { cache: "no-store" });
   const body = await res.json().catch(() => ({}));
   if (day !== $("date").value) return;
   if (!res.ok) return status(body.error || "불러오지 못했습니다.");
